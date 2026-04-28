@@ -9,7 +9,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import * as XLSX from "xlsx";
+import * as XLSX from "xlsx-js-style";
 import CoverageSummary from "./CoverageSummary";
 import { getShiftColor } from "../utils/getShiftColor";
 import EmployeeWeeklyHours, {
@@ -406,45 +406,180 @@ export default function SchedulerDashboard() {
     setSchedule(newSchedule);
   };
 
+
+
   const exportToExcel = () => {
-    if (schedule.length === 0) return;
+  if (schedule.length === 0) return;
 
-    const rows = schedule.map((emp) => {
-      const row: Record<string, string | number> = {
-        TM: emp.name,
-      };
+  const workbook = XLSX.utils.book_new();
 
-      DAYS.forEach((day) => {
-        const dayOt = emp.overtimeEntries.filter(
-          (entry) => entry.day === day
-        );
+  const headerRow1 = ["TM"];
+  const headerRow2 = [""];
 
-        const otText =
-          dayOt.length > 0
-            ? dayOt
-                .map(
-                  (entry) =>
-                    `OT ${entry.start}-${entry.end} (${entry.hours}h)`
-                )
-                .join(" | ")
-            : "";
+  DAYS.forEach((day) => {
+    headerRow1.push(day, "");
+    headerRow2.push("Start", "End");
+  });
 
-        row[day] = otText ? `${emp.days[day]} | ${otText}` : emp.days[day];
-      });
+  headerRow1.push("Hrs", "OT Hrs", "Total Hrs");
+  headerRow2.push("", "", "");
 
-      row["Hrs"] = emp.hours;
-      row["OT Hrs"] = emp.overtime;
-      row["Total Hrs"] = emp.total;
+  const rows = schedule.map((emp) => {
+    const row: (string | number)[] = [emp.name];
 
-      return row;
+    DAYS.forEach((day) => {
+      const shift = emp.days[day];
+
+      if (shift === "OFF") {
+        row.push("OFF", "OFF");
+      } else {
+        const { start, end } = getShiftParts(shift);
+        row.push(start, end);
+      }
     });
 
-    const worksheet = XLSX.utils.json_to_sheet(rows);
-    const workbook = XLSX.utils.book_new();
+    row.push(emp.hours, emp.overtime, emp.total);
 
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Weekly Schedule");
-    XLSX.writeFile(workbook, "weekly-schedule.xlsx");
+    return row;
+  });
+
+  const data = [headerRow1, headerRow2, ...rows];
+
+  const worksheet = XLSX.utils.aoa_to_sheet(data);
+
+  worksheet["!merges"] = [];
+
+  let colIndex = 1;
+
+  DAYS.forEach(() => {
+    worksheet["!merges"]!.push({
+      s: { r: 0, c: colIndex },
+      e: { r: 0, c: colIndex + 1 },
+    });
+
+    colIndex += 2;
+  });
+
+  worksheet["!cols"] = [
+    { wch: 16 },
+    ...DAYS.flatMap(() => [{ wch: 12 }, { wch: 12 }]),
+    { wch: 10 },
+    { wch: 10 },
+    { wch: 12 },
+  ];
+
+  const range = XLSX.utils.decode_range(worksheet["!ref"] || "A1");
+
+  const borderStyle = {
+    top: { style: "thin", color: { rgb: "D9E2EC" } },
+    bottom: { style: "thin", color: { rgb: "D9E2EC" } },
+    left: { style: "thin", color: { rgb: "D9E2EC" } },
+    right: { style: "thin", color: { rgb: "D9E2EC" } },
   };
+
+  for (let row = range.s.r; row <= range.e.r; row++) {
+    for (let col = range.s.c; col <= range.e.c; col++) {
+      const cellAddress = XLSX.utils.encode_cell({ r: row, c: col });
+
+      if (!worksheet[cellAddress]) {
+        worksheet[cellAddress] = { v: "", t: "s" };
+      }
+
+      worksheet[cellAddress].s = {
+        border: borderStyle,
+        alignment: {
+          horizontal: "center",
+          vertical: "center",
+        },
+        font: {
+          name: "Arial",
+          sz: 11,
+        },
+      };
+
+      if (row === 0) {
+        worksheet[cellAddress].s = {
+          ...worksheet[cellAddress].s,
+          fill: { fgColor: { rgb: "1F4E78" } },
+          font: {
+            name: "Arial",
+            sz: 11,
+            bold: true,
+            color: { rgb: "FFFFFF" },
+          },
+        };
+      }
+
+      if (row === 1) {
+        worksheet[cellAddress].s = {
+          ...worksheet[cellAddress].s,
+          fill: { fgColor: { rgb: "D9EAF7" } },
+          font: {
+            name: "Arial",
+            sz: 10,
+            bold: true,
+            color: { rgb: "1F2937" },
+          },
+        };
+      }
+
+      if (col === 0 && row >= 2) {
+        worksheet[cellAddress].s = {
+          ...worksheet[cellAddress].s,
+          alignment: {
+            horizontal: "left",
+            vertical: "center",
+          },
+          font: {
+            name: "Arial",
+            sz: 11,
+            bold: true,
+          },
+        };
+      }
+
+      if (row >= 2) {
+        const value = worksheet[cellAddress].v;
+
+        if (value === "OFF") {
+          worksheet[cellAddress].s = {
+            ...worksheet[cellAddress].s,
+            fill: { fgColor: { rgb: "FCE4E4" } },
+            font: {
+              name: "Arial",
+              sz: 11,
+              bold: true,
+              color: { rgb: "B91C1C" },
+            },
+          };
+        }
+      }
+
+      if (col >= range.e.c - 2 && row >= 2) {
+        worksheet[cellAddress].s = {
+          ...worksheet[cellAddress].s,
+          fill: { fgColor: { rgb: "F8FAFC" } },
+          font: {
+            name: "Arial",
+            sz: 11,
+            bold: true,
+          },
+        };
+      }
+    }
+  }
+
+  worksheet["!freeze"] = {
+    xSplit: 1,
+    ySplit: 2,
+  };
+
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Weekly Schedule");
+  XLSX.writeFile(workbook, "weekly-schedule.xlsx");
+};
+
+
+
 
   const openOvertimeModal = (employee: EmployeeSchedule) => {
     setSelectedEmployee(employee);
