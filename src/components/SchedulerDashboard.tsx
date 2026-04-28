@@ -15,6 +15,7 @@ import { getShiftColor } from "../utils/getShiftColor";
 import EmployeeWeeklyHours, {
   type EmployeeProfile,
 } from "./EmployeeWeeklyHours";
+import ClosedDaysSelector from "./ClosedDaysSelector";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
 
@@ -212,6 +213,7 @@ function hasShortage(
 
 export default function SchedulerDashboard() {
   const [employees, setEmployees] = useState(12);
+  const [closedDays, setClosedDays] = useState<DayName[]>([]);
 
   const [employeeProfiles, setEmployeeProfiles] = useState<EmployeeProfile[]>(
     () =>
@@ -312,6 +314,11 @@ export default function SchedulerDashboard() {
       }
 
       DAYS.forEach((day, dayIndex) => {
+        if (closedDays.includes(day)) {
+          employee.days[day] = "OFF";
+          return;
+        }
+
         if (offDays.has(dayIndex)) {
           employee.days[day] = "OFF";
           return;
@@ -347,6 +354,8 @@ export default function SchedulerDashboard() {
     });
 
     DAYS.forEach((day) => {
+      if (closedDays.includes(day)) return;
+
       let safety = 0;
 
       while (
@@ -583,7 +592,7 @@ export default function SchedulerDashboard() {
 
   const openOvertimeModal = (employee: EmployeeSchedule) => {
     setSelectedEmployee(employee);
-    setOtDay("Mon");
+    setOtDay(DAYS.find((day) => !closedDays.includes(day)) ?? "Mon");
     setOtStart("16:00");
     setOtEnd("20:00");
   };
@@ -721,6 +730,11 @@ export default function SchedulerDashboard() {
           </p>
         </div>
 
+        <ClosedDaysSelector
+          closedDays={closedDays}
+          setClosedDays={setClosedDays}
+        />
+
         <EmployeeWeeklyHours
           employeeProfiles={employeeProfiles}
           setEmployeeProfiles={setEmployeeProfiles}
@@ -787,11 +801,16 @@ export default function SchedulerDashboard() {
 
                         return (
                           <td key={day} className="p-3 align-top">
-                            {emp.days[day] === "OFF" ? (
-                              <span className="text-xs font-semibold text-red-400">
-                                OFF
-                              </span>
-                            ) : (
+                            {closedDays.includes(day) ? (
+                            <span className="rounded-full bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-700">
+                              HOLIDAY
+                            </span>
+                          ) : emp.days[day] === "OFF" ? (
+                            <span className="text-xs font-semibold text-red-400">
+                              OFF
+                            </span>
+                          ) : (
+
                               <span
                                 className={`rounded-full px-2.5 py-1 text-xs font-medium ${getShiftColor(
                                   emp.days[day]
@@ -878,7 +897,7 @@ export default function SchedulerDashboard() {
                     onChange={(e) => setOtDay(e.target.value as DayName)}
                     className="w-full rounded-md border border-gray-200 px-3 py-2 text-sm outline-none focus:border-gray-400"
                   >
-                    {DAYS.map((day) => (
+                    {DAYS.filter((day) => !closedDays.includes(day)).map((day) => (
                       <option key={day} value={day}>
                         {day}
                       </option>
