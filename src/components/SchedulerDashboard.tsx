@@ -12,10 +12,31 @@ import {
 import * as XLSX from "xlsx";
 import CoverageSummary from "./CoverageSummary";
 import { getShiftColor } from "../utils/getShiftColor";
+import EmployeeWeeklyHours, {
+  type EmployeeProfile,
+} from "./EmployeeWeeklyHours";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
 
 const SHIFT_BLOCKS = [
+  // 4h shifts
+  "08:00 - 12:00",
+  "10:00 - 14:00",
+  "12:00 - 16:00",
+  "14:00 - 18:00",
+  "16:00 - 20:00",
+  "18:00 - 22:00",
+  "20:00 - 00:00",
+
+  // 6h shifts
+  "08:00 - 14:00",
+  "10:00 - 16:00",
+  "12:00 - 18:00",
+  "14:00 - 20:00",
+  "16:00 - 22:00",
+  "18:00 - 00:00",
+
+  // 8h shifts
   "08:00 - 16:00",
   "10:00 - 18:00",
   "12:00 - 20:00",
@@ -39,12 +60,15 @@ export type OvertimeEntry = {
 export type EmployeeSchedule = {
   id: number;
   name: string;
+  maxWeeklyHours: number;
   days: Record<DayName, string>;
   hours: number;
   overtime: number;
   total: number;
   overtimeEntries: OvertimeEntry[];
 };
+
+type CoverageRequirements = Record<DayName, Record<number, number>>;
 
 function calculateHours(start: string, end: string) {
   const [startHour, startMinute] = start.split(":").map(Number);
@@ -65,26 +89,48 @@ function getShiftParts(shift: string) {
   return { start, end };
 }
 
-function getShiftStartHour(shift: string) {
-  return Number(shift.split(" - ")[0].split(":")[0]);
+function getShiftHours(shift: string) {
+  const { start, end } = getShiftParts(shift);
+  return calculateHours(start, end);
 }
 
 function shiftCoversHour(shift: string, hour: number) {
-  const startHour = getShiftStartHour(shift);
-  const endHour = startHour + 8;
+  const { start, end } = getShiftParts(shift);
+
+  const startHour = Number(start.split(":")[0]);
+  let endHour = Number(end.split(":")[0]);
+
+  if (endHour <= startHour) {
+    endHour += 24;
+  }
 
   return hour >= startHour && hour < endHour;
 }
 
-function getHourlyDemand(day: DayName, hour: number) {
-  const isWeekend = day === "Sat" || day === "Sun";
+function createDefaultCoverageRequirements(): CoverageRequirements {
+  const requirements = {} as CoverageRequirements;
 
-  if (hour >= 8 && hour < 11) return 2;
-  if (hour >= 11 && hour < 14) return 3;
-  if (hour >= 14 && hour < 21) return isWeekend ? 5 : 4;
-  if (hour >= 21 && hour < 24) return 3;
+  DAYS.forEach((day) => {
+    requirements[day] = {} as Record<number, number>;
 
-  return 0;
+    HOURS.forEach((hour) => {
+      if (hour >= 8 && hour < 12) requirements[day][hour] = 3;
+      else if (hour >= 12 && hour < 14) requirements[day][hour] = 4;
+      else if (hour >= 14 && hour < 20) requirements[day][hour] = 5;
+      else if (hour >= 20 && hour < 22) requirements[day][hour] = 4;
+      else requirements[day][hour] = 3;
+    });
+  });
+
+  return requirements;
+}
+
+function getHourlyDemand(
+  coverageRequirements: CoverageRequirements,
+  day: DayName,
+  hour: number
+) {
+  return coverageRequirements[day][hour] ?? 0;
 }
 
 function shuffleArray<T>(array: T[]) {
@@ -96,6 +142,7 @@ function createEmptyCoverage() {
 
   DAYS.forEach((day) => {
     coverage[day] = {};
+
     HOURS.forEach((hour) => {
       coverage[day][hour] = 0;
     });
@@ -118,9 +165,15 @@ function addShiftToCoverage(
 
 function getBestShiftForDay(
   day: DayName,
-  coverage: Record<DayName, Record<number, number>>
+  coverage: Record<DayName, Record<number, number>>,
+  coverageRequirements: CoverageRequirements,
+  remainingHours?: number
 ) {
   return [...SHIFT_BLOCKS]
+    .filter((shift) => {
+      if (remainingHours === undefined) return true;
+      return getShiftHours(shift) <= remainingHours;
+    })
     .map((shift) => {
       let shortageScore = 0;
       let overstaffPenalty = 0;
@@ -128,7 +181,7 @@ function getBestShiftForDay(
       HOURS.forEach((hour) => {
         if (!shiftCoversHour(shift, hour)) return;
 
-        const demand = getHourlyDemand(day, hour);
+        const demand = getHourlyDemand(coverageRequirements, day, hour);
         const current = coverage[day][hour];
 
         if (current < demand) {
@@ -143,19 +196,36 @@ function getBestShiftForDay(
         score: shortageScore * 10 - overstaffPenalty,
       };
     })
-    .sort((a, b) => b.score - a.score)[0].shift;
+    .sort((a, b) => b.score - a.score)[0]?.shift;
 }
 
 function hasShortage(
   coverage: Record<DayName, Record<number, number>>,
+  coverageRequirements: CoverageRequirements,
   day: DayName
 ) {
-  return HOURS.some((hour) => coverage[day][hour] < getHourlyDemand(day, hour));
+  return HOURS.some(
+    (hour) =>
+      coverage[day][hour] < getHourlyDemand(coverageRequirements, day, hour)
+  );
 }
 
 export default function SchedulerDashboard() {
   const [employees, setEmployees] = useState(12);
+
+  const [employeeProfiles, setEmployeeProfiles] = useState<EmployeeProfile[]>(
+    () =>
+      Array.from({ length: 12 }, (_, index) => ({
+        id: index + 1,
+        name: `TM ${index + 1}`,
+        maxWeeklyHours: 40,
+      }))
+  );
+
   const [schedule, setSchedule] = useState<EmployeeSchedule[]>([]);
+
+  const [coverageRequirements, setCoverageRequirements] =
+    useState<CoverageRequirements>(createDefaultCoverageRequirements);
 
   const [selectedEmployee, setSelectedEmployee] =
     useState<EmployeeSchedule | null>(null);
@@ -163,6 +233,26 @@ export default function SchedulerDashboard() {
   const [otDay, setOtDay] = useState<DayName>("Mon");
   const [otStart, setOtStart] = useState("16:00");
   const [otEnd, setOtEnd] = useState("20:00");
+
+  const updateEmployeeCount = (value: number) => {
+    const safeValue = Math.max(value, 1);
+
+    setEmployees(safeValue);
+
+    setEmployeeProfiles((prev) =>
+      Array.from({ length: safeValue }, (_, index) => {
+        const existing = prev[index];
+
+        return (
+          existing ?? {
+            id: index + 1,
+            name: `TM ${index + 1}`,
+            maxWeeklyHours: 40,
+          }
+        );
+      })
+    );
+  };
 
   const totalScheduledHours = useMemo(
     () => schedule.reduce((sum, emp) => sum + emp.hours, 0),
@@ -175,36 +265,35 @@ export default function SchedulerDashboard() {
   );
 
   const generateSchedule = () => {
-    const safeEmployees = Math.max(employees, 1);
-    const safeDaysOff = 2;
-    const regularWorkDays = 5;
-    const regularShiftHours = 8;
-
     const coverage = createEmptyCoverage();
     const offCountByDay = Array(7).fill(0);
 
-    const newSchedule: EmployeeSchedule[] = Array.from(
-      { length: safeEmployees },
-      (_, index) => {
-        const days = {} as Record<DayName, string>;
+    const newSchedule: EmployeeSchedule[] = employeeProfiles.map((profile) => {
+      const days = {} as Record<DayName, string>;
 
-        DAYS.forEach((day) => {
-          days[day] = "OFF";
-        });
+      DAYS.forEach((day) => {
+        days[day] = "OFF";
+      });
 
-        return {
-          id: index + 1,
-          name: `TM ${index + 1}`,
-          days,
-          hours: 0,
-          overtime: 0,
-          total: 0,
-          overtimeEntries: [],
-        };
-      }
-    );
+      return {
+        id: profile.id,
+        name: profile.name,
+        maxWeeklyHours: profile.maxWeeklyHours,
+        days,
+        hours: 0,
+        overtime: 0,
+        total: 0,
+        overtimeEntries: [],
+      };
+    });
 
     shuffleArray(newSchedule).forEach((employee) => {
+      const targetWorkDays = Math.min(
+        7,
+        Math.ceil(employee.maxWeeklyHours / 8)
+      );
+
+      const safeDaysOff = 7 - targetWorkDays;
       const offDays = new Set<number>();
 
       while (offDays.size < safeDaysOff) {
@@ -228,61 +317,86 @@ export default function SchedulerDashboard() {
           return;
         }
 
-        const bestShift = getBestShiftForDay(day, coverage);
+        const remainingHours = employee.maxWeeklyHours - employee.hours;
+
+        if (remainingHours <= 0) {
+          employee.days[day] = "OFF";
+          return;
+        }
+
+        const bestShift = getBestShiftForDay(
+          day,
+          coverage,
+          coverageRequirements,
+          remainingHours
+        );
+
+        if (!bestShift) {
+          employee.days[day] = "OFF";
+          return;
+        }
+
+        const shiftHours = getShiftHours(bestShift);
 
         employee.days[day] = bestShift;
-        employee.hours += regularShiftHours;
-        employee.total += regularShiftHours;
+        employee.hours += shiftHours;
+        employee.total += shiftHours;
 
         addShiftToCoverage(coverage, day, bestShift);
       });
-
-      if (employee.hours !== 40 && regularWorkDays * regularShiftHours === 40) {
-        employee.hours = 40;
-        employee.total = 40;
-      }
     });
 
     DAYS.forEach((day) => {
       let safety = 0;
 
-      while (hasShortage(coverage, day) && safety < 50) {
+      while (
+        hasShortage(coverage, coverageRequirements, day) &&
+        safety < 50
+      ) {
         safety++;
 
-        const bestShift = getBestShiftForDay(day, coverage);
+        const bestShift = getBestShiftForDay(
+          day,
+          coverage,
+          coverageRequirements
+        );
+
+        if (!bestShift) break;
+
         const { start, end } = getShiftParts(bestShift);
+        const otHours = getShiftHours(bestShift);
 
         const overtimeEmployee = [...newSchedule]
-  .filter((emp) => {
-    const alreadyHasSameOT = emp.overtimeEntries.some(
-      (entry) =>
-        entry.day === day &&
-        entry.start === start &&
-        entry.end === end
-    );
+          .filter((emp) => {
+            const alreadyHasSameOT = emp.overtimeEntries.some(
+              (entry) =>
+                entry.day === day &&
+                entry.start === start &&
+                entry.end === end
+            );
 
-    return !alreadyHasSameOT;
-  })
-  .sort((a, b) => {
-    const aIsOff = a.days[day] === "OFF" ? 0 : 1;
-    const bIsOff = b.days[day] === "OFF" ? 0 : 1;
+            return !alreadyHasSameOT;
+          })
+          .sort((a, b) => {
+            const aIsOff = a.days[day] === "OFF" ? 0 : 1;
+            const bIsOff = b.days[day] === "OFF" ? 0 : 1;
 
-    return aIsOff - bIsOff || a.overtime - b.overtime;
-  })[0];
+            return aIsOff - bIsOff || a.overtime - b.overtime;
+          })[0];
 
-if (!overtimeEmployee) break;
+        if (!overtimeEmployee) break;
 
         const newEntry: OvertimeEntry = {
           id: crypto.randomUUID(),
           day,
           start,
           end,
-          hours: 8,
+          hours: otHours,
         };
 
         overtimeEmployee.overtimeEntries.push(newEntry);
-        overtimeEmployee.overtime += 8;
-        overtimeEmployee.total += 8;
+        overtimeEmployee.overtime += otHours;
+        overtimeEmployee.total += otHours;
 
         addShiftToCoverage(coverage, day, bestShift);
       }
@@ -301,7 +415,9 @@ if (!overtimeEmployee) break;
       };
 
       DAYS.forEach((day) => {
-        const dayOt = emp.overtimeEntries.filter((entry) => entry.day === day);
+        const dayOt = emp.overtimeEntries.filter(
+          (entry) => entry.day === day
+        );
 
         const otText =
           dayOt.length > 0
@@ -412,8 +528,8 @@ if (!overtimeEmployee) break;
               Weekly Schedule
             </h1>
             <p className="text-sm text-gray-500">
-              Every worker gets 40h/week, 2 days off, and shifts are matched to
-              hourly demand.
+              Every worker follows their weekly hour limit, and shifts are
+              matched to hourly demand.
             </p>
           </div>
 
@@ -458,16 +574,22 @@ if (!overtimeEmployee) break;
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
             <InputBox
-                label="Employees"
-                value={employees}
-                onChange={setEmployees}
+              label="Employees"
+              value={employees}
+              onChange={updateEmployeeCount}
             />
-            </div>
+          </div>
 
-            <p className="mt-4 text-xs text-gray-400">
-                Rules: • 40h/week • 2 days off • 5 working days • 8h shift blocks.
-            </p>
+          <p className="mt-4 text-xs text-gray-400">
+            Rules: • Custom weekly hours • 4h / 6h / 8h shift blocks • Overtime
+            when coverage is still short.
+          </p>
         </div>
+
+        <EmployeeWeeklyHours
+          employeeProfiles={employeeProfiles}
+          setEmployeeProfiles={setEmployeeProfiles}
+        />
 
         {schedule.length === 0 ? (
           <div className="flex h-[300px] items-center justify-center rounded-md border border-gray-200 bg-white">
@@ -535,13 +657,13 @@ if (!overtimeEmployee) break;
                                 OFF
                               </span>
                             ) : (
-                                <span
-                                    className={`rounded-full px-2.5 py-1 text-xs font-medium ${getShiftColor(
-                                    emp.days[day]
-                                    )}`}
-                                >
-                                    {emp.days[day]}
-                                </span>
+                              <span
+                                className={`rounded-full px-2.5 py-1 text-xs font-medium ${getShiftColor(
+                                  emp.days[day]
+                                )}`}
+                              >
+                                {emp.days[day]}
+                              </span>
                             )}
 
                             {dayOt.length > 0 && (
@@ -584,7 +706,11 @@ if (!overtimeEmployee) break;
           </div>
         )}
 
-        <CoverageSummary schedule={schedule} />
+        <CoverageSummary
+          schedule={schedule}
+          coverageRequirements={coverageRequirements}
+          setCoverageRequirements={setCoverageRequirements}
+        />
 
         {selectedEmployee && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -664,7 +790,9 @@ if (!overtimeEmployee) break;
                 </div>
 
                 {selectedEmployee.overtimeEntries.length === 0 ? (
-                  <p className="text-sm text-gray-400">No overtime added yet.</p>
+                  <p className="text-sm text-gray-400">
+                    No overtime added yet.
+                  </p>
                 ) : (
                   <div className="space-y-2">
                     {selectedEmployee.overtimeEntries.map((entry) => (

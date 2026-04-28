@@ -3,16 +3,7 @@ import type { EmployeeSchedule, DayName } from "./SchedulerDashboard";
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
 const HOURS = Array.from({ length: 16 }, (_, i) => i + 8);
 
-function getShiftStartHour(shift: string) {
-  return Number(shift.split(" - ")[0].split(":")[0]);
-}
-
-function shiftCoversHour(shift: string, hour: number) {
-  const startHour = getShiftStartHour(shift);
-  const endHour = startHour + 8;
-
-  return hour >= startHour && hour < endHour;
-}
+type CoverageRequirements = Record<DayName, Record<number, number>>;
 
 function formatHourLabel(hour: number) {
   const nextHour = hour + 1;
@@ -29,66 +20,43 @@ function formatHourLabel(hour: number) {
   return `${format(hour)} - ${format(nextHour)}`;
 }
 
-function buildCoverageSummary(schedule: EmployeeSchedule[]) {
-  const summary = {} as Record<DayName, Record<number, number>>;
-
-  DAYS.forEach((day) => {
-    summary[day] = {};
-
-    HOURS.forEach((hour) => {
-      summary[day][hour] = 0;
-    });
-  });
-
-  schedule.forEach((emp) => {
-    DAYS.forEach((day) => {
-      const shift = emp.days[day];
-
-      if (shift !== "OFF") {
-        HOURS.forEach((hour) => {
-          if (shiftCoversHour(shift, hour)) {
-            summary[day][hour]++;
-          }
-        });
-      }
-
-      emp.overtimeEntries.forEach((entry) => {
-        if (entry.day !== day) return;
-
-        const otShift = `${entry.start} - ${entry.end}`;
-
-        HOURS.forEach((hour) => {
-          if (shiftCoversHour(otShift, hour)) {
-            summary[day][hour]++;
-          }
-        });
-      });
-    });
-  });
-
-  return summary;
-}
-
 export default function CoverageSummary({
-  schedule,
+  coverageRequirements,
+  setCoverageRequirements,
 }: {
   schedule: EmployeeSchedule[];
+  coverageRequirements: CoverageRequirements;
+  setCoverageRequirements: React.Dispatch<
+    React.SetStateAction<CoverageRequirements>
+  >;
 }) {
-  const coverageSummary = buildCoverageSummary(schedule);
-
-  if (schedule.length === 0) return null;
+  const updateRequirement = (day: DayName, hour: number, value: number) => {
+    setCoverageRequirements((prev) => ({
+      ...prev,
+      [day]: {
+        ...prev[day],
+        [hour]: Math.max(0, value),
+      },
+    }));
+  };
 
   return (
     <div className="mt-6 rounded-md border border-gray-200 bg-white p-5">
-      <h2 className="mb-4 text-sm font-semibold text-gray-700">
-        Hourly Coverage Summary
+      <h2 className="mb-1 text-sm font-semibold text-gray-700">
+        Hourly Coverage Requirements
       </h2>
+
+      <p className="mb-4 text-sm text-gray-500">
+        Enter how many employees are required for each hour and day. The schedule
+        will generate based on these numbers.
+      </p>
 
       <div className="overflow-x-auto">
         <table className="w-full min-w-[900px] border-collapse text-sm">
           <thead>
             <tr className="bg-[#1f4e78] text-white">
               <th className="border border-gray-200 p-2 text-left">Hour</th>
+
               {DAYS.map((day) => (
                 <th
                   key={day}
@@ -110,9 +78,17 @@ export default function CoverageSummary({
                 {DAYS.map((day) => (
                   <td
                     key={day}
-                    className="border border-gray-200 p-2 text-center font-semibold text-blue-700"
+                    className="border border-gray-200 p-2 text-center"
                   >
-                    {coverageSummary[day][hour]}
+                    <input
+                      type="number"
+                      min={0}
+                      value={coverageRequirements[day][hour]}
+                      onChange={(e) =>
+                        updateRequirement(day, hour, Number(e.target.value))
+                      }
+                      className="mx-auto w-16 rounded border border-gray-300 bg-white px-2 py-1 text-center font-semibold text-blue-700 outline-none focus:border-blue-500"
+                    />
                   </td>
                 ))}
               </tr>
