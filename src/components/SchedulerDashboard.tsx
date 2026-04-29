@@ -16,6 +16,7 @@ import EmployeeWeeklyHours, {
   type EmployeeProfile,
 } from "./EmployeeWeeklyHours";
 import ClosedDaysSelector from "./ClosedDaysSelector";
+import GeneratedCoverageResult from "./GeneratedCoverageResult";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
 
@@ -860,11 +861,14 @@ export default function SchedulerDashboard() {
           </div>
         )}
 
+        <GeneratedCoverageResult schedule={schedule} />
+
         <CoverageSummary
           schedule={schedule}
           coverageRequirements={coverageRequirements}
           setCoverageRequirements={setCoverageRequirements}
         />
+        
 
         {selectedEmployee && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
