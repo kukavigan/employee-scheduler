@@ -52,22 +52,6 @@ const SHIFT_BLOCKS = [
 
 const HOURS = Array.from({ length: 23 }, (_, i) => i + 8);
 
-function formatHourLabel(hour: number) {
-  const nextHour = hour + 1;
-
-  const format = (h: number) => {
-    const normalized = h % 24;
-
-    if (normalized === 0) return "12 AM";
-    if (normalized < 12) return `${normalized} AM`;
-    if (normalized === 12) return "12 PM";
-
-    return `${normalized - 12} PM`;
-  };
-
-  return `${format(hour)} - ${format(nextHour)}`;
-}
-
 export type DayName = (typeof DAYS)[number];
 export type ShiftBlock = (typeof SHIFT_BLOCKS)[number];
 
