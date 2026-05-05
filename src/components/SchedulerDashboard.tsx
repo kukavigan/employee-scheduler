@@ -16,37 +16,64 @@ import EmployeeWeeklyHours, {
   type EmployeeProfile,
 } from "./EmployeeWeeklyHours";
 import ClosedDaysSelector from "./ClosedDaysSelector";
-import GeneratedCoverageResult from "./GeneratedCoverageResult";
 import CoverageMatchResult from "./CoverageMatchResult";
+import { OVERTIME_BLOCKS } from "../utils/overtimeBlocks";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
 
 const SHIFT_BLOCKS = [
   // 4h shifts
   "08:00 - 12:00",
+  "09:00 - 13:00",
   "10:00 - 14:00",
+  "11:00 - 15:00",
   "12:00 - 16:00",
+  "13:00 - 17:00",
   "14:00 - 18:00",
+  "15:00 - 19:00",
   "16:00 - 20:00",
+  "17:00 - 21:00",
   "18:00 - 22:00",
+  "19:00 - 23:00",
   "20:00 - 00:00",
+  "21:00 - 01:00",
+  "22:00 - 02:00",
+  "23:00 - 03:00",
 
   // 6h shifts
   "08:00 - 14:00",
+  "09:00 - 15:00",
   "10:00 - 16:00",
+  "11:00 - 17:00",
   "12:00 - 18:00",
+  "13:00 - 19:00",
   "14:00 - 20:00",
+  "15:00 - 21:00",
   "16:00 - 22:00",
+  "17:00 - 23:00",
   "18:00 - 00:00",
+  "19:00 - 01:00",
+  "20:00 - 02:00",
+  "21:00 - 03:00",
+  "22:00 - 04:00",
+  "23:00 - 05:00",
 
   // 8h shifts
   "08:00 - 16:00",
+  "09:00 - 17:00",
   "10:00 - 18:00",
+  "11:00 - 19:00",
   "12:00 - 20:00",
+  "13:00 - 21:00",
   "14:00 - 22:00",
+  "15:00 - 23:00",
   "16:00 - 00:00",
+  "17:00 - 01:00",
   "18:00 - 02:00",
+  "19:00 - 03:00",
   "20:00 - 04:00",
+  "21:00 - 05:00",
+  "22:00 - 06:00",
   "23:00 - 07:00",
 ] as const;
 
@@ -171,6 +198,7 @@ function addShiftToCoverage(
   });
 }
 
+
 function getBestShiftForDay(
   day: DayName,
   coverage: Record<DayName, Record<number, number>>,
@@ -185,12 +213,18 @@ function getBestShiftForDay(
     .map((shift) => {
       let shortageScore = 0;
       let overstaffPenalty = 0;
+      let zeroDemandPenalty = 0;
 
       HOURS.forEach((hour) => {
         if (!shiftCoversHour(shift, hour)) return;
 
         const demand = getHourlyDemand(coverageRequirements, day, hour);
         const current = coverage[day][hour];
+
+        if (demand === 0) {
+          zeroDemandPenalty += 100;
+          return;
+        }
 
         if (current < demand) {
           shortageScore += demand - current;
@@ -201,11 +235,49 @@ function getBestShiftForDay(
 
       return {
         shift,
-        score: shortageScore * 10 - overstaffPenalty,
+        score: shortageScore * 10 - overstaffPenalty - zeroDemandPenalty,
       };
     })
     .sort((a, b) => b.score - a.score)[0]?.shift;
 }
+
+function getBestOvertimeBlockForDay(
+  day: DayName,
+  coverage: Record<DayName, Record<number, number>>,
+  coverageRequirements: CoverageRequirements
+) {
+  return [...OVERTIME_BLOCKS]
+    .map((shift) => {
+      let shortageScore = 0;
+      let overstaffPenalty = 0;
+      let zeroDemandPenalty = 0;
+
+      HOURS.forEach((hour) => {
+        if (!shiftCoversHour(shift, hour)) return;
+
+        const demand = getHourlyDemand(coverageRequirements, day, hour);
+        const current = coverage[day][hour];
+
+        if (demand === 0) {
+          zeroDemandPenalty += 100;
+          return;
+        }
+
+        if (current < demand) {
+          shortageScore += demand - current;
+        } else {
+          overstaffPenalty += current - demand + 1;
+        }
+      });
+
+      return {
+        shift,
+        score: shortageScore * 10 - overstaffPenalty - zeroDemandPenalty,
+      };
+    })
+    .sort((a, b) => b.score - a.score)[0]?.shift;
+}
+
 
 function hasShortage(
   coverage: Record<DayName, Record<number, number>>,
@@ -216,6 +288,18 @@ function hasShortage(
     (hour) =>
       coverage[day][hour] < getHourlyDemand(coverageRequirements, day, hour)
   );
+}
+
+function isOvertimeConnectedToRegularShift(
+  regularShift: string,
+  overtimeStart: string,
+  overtimeEnd: string
+) {
+  if (regularShift === "OFF") return false;
+
+  const { start: regularStart, end: regularEnd } = getShiftParts(regularShift);
+
+  return overtimeStart === regularEnd || overtimeEnd === regularStart;
 }
 
 export default function SchedulerDashboard() {
@@ -374,7 +458,7 @@ export default function SchedulerDashboard() {
       ) {
         safety++;
 
-        const bestShift = getBestShiftForDay(
+        const bestShift = getBestOvertimeBlockForDay(
           day,
           coverage,
           coverageRequirements
@@ -386,16 +470,46 @@ export default function SchedulerDashboard() {
         const otHours = getShiftHours(bestShift);
 
         const overtimeEmployee = [...newSchedule]
-          .filter((emp) => {
-            const alreadyHasSameOT = emp.overtimeEntries.some(
-              (entry) =>
-                entry.day === day &&
-                entry.start === start &&
-                entry.end === end
-            );
 
-            return !alreadyHasSameOT;
+          .filter((emp) => {
+          const alreadyHasSameOT = emp.overtimeEntries.some(
+            (entry) =>
+            entry.day === day &&
+            entry.start === start &&
+            entry.end === end
+          );
+
+          const alreadyHasAnyOTOnThisDay = emp.overtimeEntries.some(
+          (entry) => entry.day === day
+          );
+
+          if (alreadyHasAnyOTOnThisDay) {
+            return false;
+          }
+
+          const isWorkday = emp.days[day] !== "OFF";
+          const isShortOvertime = otHours <= 4;
+          const isLongOvertime = otHours >= 6;
+
+          if (isShortOvertime) {
+            const isConnectedToRegularShift = isOvertimeConnectedToRegularShift(
+            emp.days[day],
+            start,
+            end
+          );
+
+          if (!isWorkday || !isConnectedToRegularShift) {
+            return false;
+            }
+          }
+
+          if (isLongOvertime && isWorkday) {
+          return false;
+          }
+
+          return !alreadyHasSameOT;
           })
+
           .sort((a, b) => {
             const aIsOff = a.days[day] === "OFF" ? 0 : 1;
             const bIsOff = b.days[day] === "OFF" ? 0 : 1;
@@ -889,8 +1003,6 @@ export default function SchedulerDashboard() {
             </div>
           </div>
         )}
-
-        <GeneratedCoverageResult schedule={schedule} />
 
         <CoverageMatchResult
           schedule={schedule}
