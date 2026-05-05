@@ -1,7 +1,7 @@
 import type { EmployeeSchedule, DayName } from "./SchedulerDashboard";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
-const HOURS = Array.from({ length: 16 }, (_, i) => i + 8);
+const HOURS = Array.from({ length: 23 }, (_, i) => i + 8);
 
 type CoverageRequirements = Record<DayName, Record<number, number>>;
 

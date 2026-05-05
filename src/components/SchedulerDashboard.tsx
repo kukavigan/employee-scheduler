@@ -17,6 +17,7 @@ import EmployeeWeeklyHours, {
 } from "./EmployeeWeeklyHours";
 import ClosedDaysSelector from "./ClosedDaysSelector";
 import GeneratedCoverageResult from "./GeneratedCoverageResult";
+import CoverageMatchResult from "./CoverageMatchResult";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
 
@@ -44,9 +45,28 @@ const SHIFT_BLOCKS = [
   "12:00 - 20:00",
   "14:00 - 22:00",
   "16:00 - 00:00",
+  "18:00 - 02:00",
+  "20:00 - 04:00",
+  "23:00 - 07:00",
 ] as const;
 
-const HOURS = Array.from({ length: 16 }, (_, i) => i + 8);
+const HOURS = Array.from({ length: 23 }, (_, i) => i + 8);
+
+function formatHourLabel(hour: number) {
+  const nextHour = hour + 1;
+
+  const format = (h: number) => {
+    const normalized = h % 24;
+
+    if (normalized === 0) return "12 AM";
+    if (normalized < 12) return `${normalized} AM`;
+    if (normalized === 12) return "12 PM";
+
+    return `${normalized - 12} PM`;
+  };
+
+  return `${format(hour)} - ${format(nextHour)}`;
+}
 
 export type DayName = (typeof DAYS)[number];
 export type ShiftBlock = (typeof SHIFT_BLOCKS)[number];
@@ -106,7 +126,9 @@ function shiftCoversHour(shift: string, hour: number) {
     endHour += 24;
   }
 
-  return hour >= startHour && hour < endHour;
+  const normalizedHour = hour < startHour ? hour + 24 : hour;
+
+  return normalizedHour >= startHour && normalizedHour < endHour;
 }
 
 function createDefaultCoverageRequirements(): CoverageRequirements {
@@ -226,6 +248,8 @@ export default function SchedulerDashboard() {
   );
 
   const [schedule, setSchedule] = useState<EmployeeSchedule[]>([]);
+
+  const [overtimeEnabled, setOvertimeEnabled] = useState(true);
 
   const [coverageRequirements, setCoverageRequirements] =
     useState<CoverageRequirements>(createDefaultCoverageRequirements);
@@ -354,6 +378,7 @@ export default function SchedulerDashboard() {
       });
     });
 
+  if (overtimeEnabled) {
     DAYS.forEach((day) => {
       if (closedDays.includes(day)) return;
 
@@ -411,6 +436,7 @@ export default function SchedulerDashboard() {
         addShiftToCoverage(coverage, day, bestShift);
       }
     });
+  }
 
     newSchedule.sort((a, b) => a.id - b.id);
     setSchedule(newSchedule);
@@ -602,7 +628,13 @@ export default function SchedulerDashboard() {
     if (!selectedEmployee) return;
 
     const hours = calculateHours(otStart, otEnd);
-    if (hours <= 0) return;
+
+      if (hours <= 0) return;
+
+      if (!Number.isInteger(hours)) {
+        alert("Overtime must be a full-hour value.");
+      return;
+    }
 
     const newEntry: OvertimeEntry = {
       id: crypto.randomUUID(),
@@ -678,13 +710,26 @@ export default function SchedulerDashboard() {
             </p>
           </div>
 
-          <button
-            onClick={generateSchedule}
-            className="flex items-center gap-2 rounded-md bg-[#0f172a] px-5 py-3 text-sm font-semibold text-white"
-          >
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setOvertimeEnabled((prev) => !prev)}
+              className={`rounded-md px-4 py-3 text-sm font-semibold ${
+              overtimeEnabled
+              ? "bg-amber-100 text-amber-700"
+              : "bg-red-100 text-red-500"
+            }`}
+            >
+              Overtime: {overtimeEnabled ? "ON" : "OFF"}
+            </button>
+
+            <button
+              onClick={generateSchedule}
+              className="flex items-center gap-2 rounded-md bg-[#0f172a] px-5 py-3 text-sm font-semibold text-white"
+            >
             <CalendarPlus size={16} />
-            Generate Schedule
-          </button>
+              Generate Schedule
+            </button>
+          </div>
         </div>
 
         <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-4">
@@ -862,6 +907,11 @@ export default function SchedulerDashboard() {
         )}
 
         <GeneratedCoverageResult schedule={schedule} />
+
+        <CoverageMatchResult
+          schedule={schedule}
+          coverageRequirements={coverageRequirements}
+        />
 
         <CoverageSummary
           schedule={schedule}
