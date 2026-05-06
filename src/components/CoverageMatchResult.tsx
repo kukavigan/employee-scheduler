@@ -14,14 +14,18 @@ function getShiftParts(shift: string) {
 function shiftCoversHour(shift: string, hour: number) {
   const { start, end } = getShiftParts(shift);
 
-  const startHour = Number(start.split(":")[0]);
+  let startHour = Number(start.split(":")[0]);
   let endHour = Number(end.split(":")[0]);
+
+  if (startHour < 8) {
+    startHour += 24;
+  }
 
   if (endHour <= startHour) {
     endHour += 24;
   }
 
-  const normalizedHour = hour < startHour ? hour + 24 : hour;
+  const normalizedHour = hour < 8 ? hour + 24 : hour;
 
   return normalizedHour >= startHour && normalizedHour < endHour;
 }
