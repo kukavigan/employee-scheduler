@@ -149,11 +149,7 @@ function createDefaultCoverageRequirements(): CoverageRequirements {
     requirements[day] = {} as Record<number, number>;
 
     HOURS.forEach((hour) => {
-      if (hour >= 8 && hour < 12) requirements[day][hour] = 3;
-      else if (hour >= 12 && hour < 14) requirements[day][hour] = 4;
-      else if (hour >= 14 && hour < 20) requirements[day][hour] = 5;
-      else if (hour >= 20 && hour < 22) requirements[day][hour] = 4;
-      else requirements[day][hour] = 3;
+      requirements[day][hour] = 0;
     });
   });
 
